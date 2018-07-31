@@ -1,0 +1,24 @@
+PODS:
+  - FBRetainCycleDetector (0.1.4)
+  - Masonry (1.1.0)
+  - MLeaksFinder (1.0.0):
+    - FBRetainCycleDetector
+
+DEPENDENCIES:
+  - Masonry
+  - MLeaksFinder
+
+SPEC REPOS:
+  https://github.com/cocoapods/specs.git:
+    - FBRetainCycleDetector
+    - Masonry
+    - MLeaksFinder
+
+SPEC CHECKSUMS:
+  FBRetainCycleDetector: 46f8179bbb1c587deee3ea838a1a3ee02acf5015
+  Masonry: 678fab65091a9290e40e2832a55e7ab731aad201
+  MLeaksFinder: 8c435bd2f6d070af18cff082b503b21adc130fc0
+
+PODFILE CHECKSUM: 4270c3ff09bdb25897b44cab96c7e8086e0d275c
+
+COCOAPODS: 1.5.3
