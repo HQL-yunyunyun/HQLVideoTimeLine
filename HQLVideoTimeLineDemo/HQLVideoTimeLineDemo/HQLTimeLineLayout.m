@@ -18,10 +18,11 @@
     double _timeLineLength;
     NSMutableArray *_headerCenterXArray; // 记录header的位置
     NSMutableArray *_footerCenterXArray; // 记录footer的位置
-    double _timeLineDuration; // 总时长
+    CMTime _timeLineDuration; // 总时长
     HQLTimeAndLengthRatio *_timeLengthRatio; // 换算
-    double _itemHeight; // 高度
     NSUInteger _coverSectionCount; // coverSectionCount
+    
+    double _itemHeight; // 高度
     
     NSMutableArray *_insertArray;
     NSMutableArray *_deleteArray;
@@ -57,11 +58,9 @@
 }
 
 - (CGSize)collectionViewContentSize {
-    UIEdgeInsets inserts = self.collectionView.contentInset;
     // 计算真正的长度
     _timeLineLength = [_timeLengthRatio calculateLengthWithTime:_timeLineDuration];
-    double target = _timeLineLength + inserts.left + inserts.right;
-    return CGSizeMake(target, self.collectionView.frame.size.height);
+    return CGSizeMake(_timeLineLength, self.collectionView.frame.size.height);
 }
 
 - (NSArray<UICollectionViewLayoutAttributes *> *)layoutAttributesForElementsInRect:(CGRect)rect {
@@ -69,22 +68,21 @@
     NSMutableArray *attributes = [NSMutableArray array];
 
     // 遍历所有的section --- 包括coverSection
+    /* // 这两个方法都在执行删除之后都不能获取正在的值
+    [self.collectionView numberOfSections];
+    [self.collectionView numberOfItemsInSection:0];
+    //*/
+    //NSInteger sectionCount = [self.collectionView.dataSource numberOfSectionsInCollectionView:self.collectionView];
     NSInteger sectionCount = [self.collectionView numberOfSections];
     
-    double headerCenterX = self.collectionView.contentInset.left;
+    double headerCenterX = 0;
     double footerCenterX = headerCenterX;
     
     for (NSInteger section = 0; section < sectionCount; section++) {
-
-        NSIndexPath *SupplementaryViewIndexPath = [NSIndexPath indexPathForItem:0 inSection:section];
-        // header
-        UICollectionViewLayoutAttributes *headerAttri = [self layoutAttributesForSupplementaryViewOfKind:UICollectionElementKindSectionHeader atIndexPath:SupplementaryViewIndexPath];
-        if (headerAttri) {
-            [attributes addObject:headerAttri];
-        }
-        NSAssert(headerAttri, @"%s %d", __func__, __LINE__);
         
         // cell item
+        //NSInteger numberOfItemsInSection = [self.collectionView.dataSource collectionView:self.collectionView numberOfItemsInSection:section];
+        
         NSInteger numberOfItemsInSection = [self.collectionView numberOfItemsInSection:section];
         
         if (numberOfItemsInSection > 0) {
@@ -108,18 +106,27 @@
             
         }
         
+        [_headerCenterXArray addObject:@(headerCenterX)];
+        [_footerCenterXArray addObject:@(footerCenterX)];
+        
+        // 如果上一个section有值，下一个section没值，那么下一个section的header和footer应该跟上一个section的footer重叠在一起
+        headerCenterX = footerCenterX;
+        
+        // header and footer
+        NSIndexPath *SupplementaryViewIndexPath = [NSIndexPath indexPathForItem:0 inSection:section];
+        // header
+        UICollectionViewLayoutAttributes *headerAttri = [self layoutAttributesForSupplementaryViewOfKind:UICollectionElementKindSectionHeader atIndexPath:SupplementaryViewIndexPath];
+        if (headerAttri) {
+            [attributes addObject:headerAttri];
+        }
+        NSAssert(headerAttri, @"%s %d", __func__, __LINE__);
+        
         // footer
         UICollectionViewLayoutAttributes *footerAttri = [self layoutAttributesForSupplementaryViewOfKind:UICollectionElementKindSectionFooter atIndexPath:SupplementaryViewIndexPath];
         if (footerAttri) {
             [attributes addObject:footerAttri];
         }
         NSAssert(footerAttri, @"%s %d", __func__, __LINE__);
-
-        [_headerCenterXArray addObject:@(headerCenterX)];
-        [_footerCenterXArray addObject:@(footerCenterX)];
-        
-        // 如果上一个section有值，下一个section没值，那么下一个section的header和footer应该跟上一个section的footer重叠在一起
-        headerCenterX = footerCenterX;
         
     }
 
@@ -139,22 +146,22 @@
     NSAssert(CMTIMERANGE_IS_INVALID(timeRange) != YES, @"%s %d %@ %@", __func__, __LINE__, @"Invalid time range of indexPath", indexPath);
     
     // 判断timeRange是否合法
+    ///* // 不用判断是否合法
     NSAssert(CMTimeRangeContainsTimeRange(self.timeLineRange, timeRange), @"%s %d %@ %@", __func__, __LINE__, @"Invalid time range of indexPath", indexPath);
+    //*/
     
     // 计算位置size
-    double duration = CMTimeGetSeconds(timeRange.duration);
-    double width = [_timeLengthRatio calculateLengthWithTime:duration];
+    double width = [_timeLengthRatio calculateLengthWithTime:timeRange.duration];
     
     // 计算center
     double centerY = self.collectionView.frame.size.height * 0.5;
-    double start = CMTimeGetSeconds(timeRange.start);
-    double startX = [_timeLengthRatio calculateLengthWithTime:start];
+    double startX = [_timeLengthRatio calculateLengthWithTime:timeRange.start];
     
     // 计算出来的结果有可能是超出范围的 --- 但不会导致崩毁
-    NSAssert(((startX + width) <= _timeLineLength), @"%s %d %@", __func__, __LINE__, @"Out of collection view content size");
+    //NSAssert(((startX + width) <= _timeLineLength), @"%s %d %@", __func__, __LINE__, @"Out of collection view content size");
     
     // 要加上inset
-    double centerX = startX + width + self.collectionView.contentInset.left;
+    double centerX = startX + width * 0.5;
     CGPoint center = CGPointMake(centerX, centerY);
     CGSize size = CGSizeMake(width, _itemHeight);
     
@@ -221,6 +228,15 @@
 
 - (void)prepareForCollectionViewUpdates:(NSArray<UICollectionViewUpdateItem *> *)updateItems {
     [super prepareForCollectionViewUpdates:updateItems];
+    
+    // 暂时只有删除和插入
+    UICollectionViewUpdateItem *aUpdate = updateItems.firstObject;
+    if (aUpdate.updateAction != UICollectionUpdateActionDelete ||
+        aUpdate.updateAction != UICollectionUpdateActionInsert) {
+        return;
+    }
+    //[self prepareLayout];
+    //[self collectionViewContentSize];
     
     _insertArray = [NSMutableArray array];
     _deleteArray = [NSMutableArray array];
@@ -294,19 +310,49 @@
 #pragma mark - getter
 
 - (CMTimeRange)timeLineRange {
-    return CMTimeRangeMake(CMTimeMakeWithSeconds(0, 600), CMTimeMakeWithSeconds(_timeLineDuration, 600));
+    return CMTimeRangeMake(CMTimeMakeWithSeconds(0, 600), _timeLineDuration);
 }
 
 @end
 
-@implementation HQLTimeAndLengthRatio
-
-- (double)calculateLengthWithTime:(double)time {
-    return (time / self.timeDuration * self.lengthPerTimeDuration);
+@implementation HQLTimeAndLengthRatio {
+    CMTime _timeDuration;
+    double _lengthPerTimeDuration;
 }
 
-- (double)calculateTimeWithLength:(double)length {
-    return (length / self.lengthPerTimeDuration * self.timeDuration);
+- (instancetype)initWithTimeDuration:(CMTime)timeDuration lengthPerTimeDuration:(double)lengthPerTimeDuration {
+    if (self = [super init]) {
+        _timeDuration = timeDuration;
+        _lengthPerTimeDuration = lengthPerTimeDuration;
+    }
+    return self;
+}
+
+- (void)updateTimeDuration:(CMTime)duration {
+    if (CMTimeCompare(duration, _timeDuration) == 0) {
+        return;
+    }
+    _timeDuration = duration;
+}
+
+- (double)calculateLengthWithTime:(CMTime)time {
+    double aTime = CMTimeGetSeconds(time);
+    double timeDuration = CMTimeGetSeconds(self.timeDuration);
+    return (aTime / timeDuration * self.lengthPerTimeDuration);
+}
+
+- (CMTime)calculateTimeWithLength:(double)length {
+    double timeDuration = CMTimeGetSeconds(self.timeDuration);
+    double time = (length / self.lengthPerTimeDuration * timeDuration);
+    return CMTimeMakeWithSeconds(time, 600);
+}
+
+- (CMTime)timeDuration {
+    return _timeDuration;
+}
+
+- (double)lengthPerTimeDuration {
+    return _lengthPerTimeDuration;
 }
 
 @end

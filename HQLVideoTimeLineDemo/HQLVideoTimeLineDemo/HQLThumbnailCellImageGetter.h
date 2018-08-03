@@ -26,9 +26,6 @@
  */
 - (void)generateThumbnailWithModel:(HQLThumbnailModel *)model mainThread:(BOOL)isMainThread;
 
-- (void)wait;
-- (void)run;
-
 - (void)cleanMemory;
 
 @end

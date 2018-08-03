@@ -14,6 +14,14 @@
 
 @property (nonatomic, strong) AVAsset *asset;
 
-@property (nonatomic, assign) CMTimeRange timeRange; // 记录videoItem的timeRange
+/**
+ 记录videoItem的timeRange
+ */
+@property (nonatomic, assign) CMTimeRange timeRange; 
+
+/**
+ 记录在timeLine开始的时间
+ */
+@property (nonatomic, assign) CMTime startTimeInTimeLine;
 
 @end

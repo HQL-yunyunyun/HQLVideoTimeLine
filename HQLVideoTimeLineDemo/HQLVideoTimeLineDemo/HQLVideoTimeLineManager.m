@@ -10,35 +10,41 @@
 
 #import "HQLVideoItem.h"
 
-//#import "HQLVideoItemCell.h"
-
 #import "HQLThumbnailModel.h"
 #import "HQLThumbnailCell.h"
 #import "HQLThumbnailCellImageGetter.h"
 
+#import "HQLTimeLineLayout.h"
+
 #import <pthread.h>
 #import <AVFoundation/AVFoundation.h>
 
-@interface HQLVideoTimeLineManager () <UICollectionViewDelegate, UICollectionViewDataSource,UICollectionViewDelegateFlowLayout>
+@interface HQLVideoTimeLineManager () <UICollectionViewDelegate, UICollectionViewDataSource,HQLTimeLineLayoutDelegate>
 
 @property (nonatomic, strong) NSMutableArray <HQLVideoItem *>*videoItems;
 
 /**
  表示一个标准cell显示的时间
  */
-@property (nonatomic, assign) double timeScale;
+@property (nonatomic, strong) HQLTimeAndLengthRatio *timeLengthRatio;
 
-@property (nonatomic, assign) double lastScale;
+/**
+ 当前计算的timeScale
+ 目前缩放的时候，collectionView的numberOfSection计算是根据self.timeScale的，而reloadData不是线性的调用，所以就会出现一种情况当计算numberOfSection 和 cellForItem 这两个delegate之间会改变timeScale，而造成数据不对，所以就记录每一次reloadData的timeScale
+ */
+@property (nonatomic, strong) HQLTimeAndLengthRatio *calculateTimeLengthRatio;
 
 /**
  视频长度 --- 只有在updateVideoItems的时候才会更新
  */
-@property (nonatomic, assign) double totalDuration;
+@property (nonatomic, assign) CMTime totalDuration;
+
+@property (nonatomic, assign) double lastScale;
 
 /**
  时间线
  */
-@property (nonatomic, strong) UICollectionView *timeLineView;
+@property (nonatomic, strong) HQLTimeLineView *timeLineView;
 
 @property (nonatomic, assign) BOOL isDurationPinch;
 
@@ -48,15 +54,23 @@
 @property (nonatomic, assign) double beforePinchWidth;
 
 /**
- 当前计算的timeScale
- 目前缩放的时候，collectionView的numberOfSection计算是根据self.timeScale的，而reloadData不是线性的调用，所以就会出现一种情况当计算numberOfSection 和 cellForItem 这两个delegate之间会改变timeScale，而造成数据不对，所以就记录每一次reloadData的timeScale
+ 记录当前正在显示的videoItem
  */
-@property (nonatomic, assign) double calcualteTimeScale;
+@property (nonatomic, strong) HQLVideoItem *currentVideoItem;
+
+/**
+ 记录timeLineViewcontentSize开始的X
+ */
+@property (nonatomic, assign) CGFloat timeLineViewBeginOffsetX;
+
+/**
+ 当前时间
+ */
+@property (nonatomic, assign) CMTime currentTime;
 
 @end
 
 @implementation HQLVideoTimeLineManager {
-    CGPoint _lastTouchPosition;
     
     dispatch_queue_t _updateScaleQueue;
     pthread_mutex_t _updateScaleWait;
@@ -64,12 +78,17 @@
     /**
      最小的timeScale
      */
-    double _minTimeScale;
+    CMTime _minTimeRatio;
     
     /**
      标准的cellsize
      */
     double _cellSize;
+    
+    CGFloat _lastContentOffsetX;
+    CMTime _lastSeekTime;
+    
+    BOOL _canRemove;
 }
 
 #pragma mark - life cycle
@@ -82,7 +101,9 @@
 }
 
 - (void)dealloc {
+    
     [self cleanMemory];
+    
     NSLog(@"dealloc ---> %@", NSStringFromClass([self class]));
 }
 
@@ -90,13 +111,15 @@
 
 - (void)configManager {
     self.videoItems = [NSMutableArray array];
-    self.timeScale = 1.0; // 一个标准长度的cell表示一秒
-    self.lastScale = 1.0;
-    self.calcualteTimeScale = self.timeScale;
+    
+    _canRemove = YES;
     
     // 不会改变的
     _cellSize = 100;
-    _minTimeScale = 1.0; // 最小刻度为1秒
+    _minTimeRatio = CMTimeMakeWithSeconds(1.0, 600); // 最小刻度为1秒
+    
+    self.timeLengthRatio = [[HQLTimeAndLengthRatio alloc] initWithTimeDuration:_minTimeRatio lengthPerTimeDuration:_cellSize];
+    self.calculateTimeLengthRatio = [[HQLTimeAndLengthRatio alloc] initWithTimeDuration:_minTimeRatio lengthPerTimeDuration:_cellSize];
     
     /*
      创建线程
@@ -115,20 +138,14 @@
 #pragma mark - Public
 
 /**
- 更新视频源 --- 会触发[self.videoItems removeAllObject]
- */
-- (void)updateVideoItems:(NSArray <HQLVideoItem *>*)videoItems {
-    [self.videoItems removeAllObjects];
-    [self.videoItems addObjectsFromArray:videoItems];
-    
-    // 更新
-    [self.timeLineView reloadData];
-}
-
-/**
  绑定collectionView
  */
-- (void)bindWithCollectionView:(UICollectionView *)collectionView {
+- (void)bindWithCollectionView:(HQLTimeLineView *)collectionView {
+    
+    if (![collectionView isKindOfClass:[HQLTimeLineView class]]) {
+        NSAssert(NO, @"%s %d %@", __func__, __LINE__, @"Unsupport timeline view");
+        return;
+    }
     
     if (_timeLineView) {
         NSAssert(NO, @"%s %d %@", __func__, __LINE__, @"Time line view already exist.");
@@ -145,11 +162,19 @@
         return;
     }
     
+    HQLTimeLineLayout *layout = (HQLTimeLineLayout *)collectionView.collectionViewLayout;
+    
+    if (![layout isKindOfClass:[HQLTimeLineLayout class]]) {
+        NSAssert(NO, @"%s %d %@", __func__, __LINE__, layout);
+        return;
+    }
+    
+    // layout.delegate 指向self
+    layout.delegate = self;
     collectionView.delegate = self;
     collectionView.dataSource = self;
     
     [collectionView registerClass:[HQLThumbnailCell class] forCellWithReuseIdentifier:@"reuseId"];
-//    [collectionView registerClass:[HQLVideoItemCell class] forCellWithReuseIdentifier:@"reuseId"];
     
     [collectionView registerClass:[UICollectionReusableView class] forSupplementaryViewOfKind:UICollectionElementKindSectionHeader withReuseIdentifier:@"headerReuseId"];
     [collectionView registerClass:[UICollectionReusableView class] forSupplementaryViewOfKind:UICollectionElementKindSectionFooter withReuseIdentifier:@"footerReuseId"];
@@ -162,105 +187,235 @@
     self.timeLineView = collectionView;
 }
 
+#pragma mark - DataSource operation method
+
+/**
+ 更新视频源 --- 会触发[self.videoItems removeAllObject]
+ */
+- (void)updateVideoItems:(NSArray <HQLVideoItem *>*)videoItems {
+    [self.videoItems removeAllObjects];
+    [self.videoItems addObjectsFromArray:videoItems];
+    
+    ///!!!:更新数据源之后，必须要更新self.totalDuration，在这期间会更新videoItem.startTimeInTimeLine
+    self.totalDuration = [self calculateTotalDuation];
+    
+    // 更新
+    [self.timeLineView reloadData];
+}
+
+- (void)insertVideoItemsAfterCurrentVideoItem:(NSArray<HQLVideoItem *> *)videoItems {
+    
+    NSUInteger index = [self.videoItems indexOfObject:self.currentVideoItem];
+    [self insertVideoItems:videoItems index:(index + 1)];
+}
+
+- (void)insertVideoItems:(NSArray<HQLVideoItem *> *)videoItems index:(NSUInteger)index {
+    if (index >= self.videoItems.count) { // 大于数组的个数
+        NSInteger origin = self.videoItems.count;
+        CMTime originDuration = self.totalDuration;
+        // 更新startInTimeLine
+        [self.videoItems addObjectsFromArray:videoItems];
+        ///!!!:更新数据源之后，必须要更新self.totalDuration，在这期间会更新videoItem.startTimeInTimeLine
+        self.totalDuration = [self calculateTotalDuation];
+        // collectionView 进行刷新
+        ///!!!: 刷新前会先scroll到插入的位置
+//        [self scrollToTime:originDuration animate:NO];
+        @try {
+            
+            NSIndexSet *indexSet = [NSIndexSet indexSetWithIndexesInRange:NSMakeRange(origin, videoItems.count)];
+            // 在调用前调用 会触发重新布局
+            [self.timeLineView.collectionViewLayout invalidateLayout];
+            [self.timeLineView performBatchUpdates:^{
+                [self.timeLineView insertSections:indexSet];
+            } completion:^(BOOL finished) {
+            }];
+            
+        } @catch (NSException *exception) {
+            NSAssert(NO, @"%s %d %@", __func__, __LINE__, exception);
+        }
+        
+        return;
+    }
+    
+    NSInteger lastIndex = index == 0 ? 0 : (index - 1);
+    HQLVideoItem *lastItem = self.videoItems[lastIndex];
+    CMTime scrollTime = CMTimeAdd(lastItem.startTimeInTimeLine, lastItem.timeRange.duration);
+    
+    NSIndexSet *indexSet = [NSIndexSet indexSetWithIndexesInRange:NSMakeRange(index, videoItems.count)];
+    [self.videoItems insertObjects:videoItems atIndexes:indexSet];
+    ///!!!: 更新数据源之后，必须要更新self.totalDuration，在这期间会更新videoItem.startTimeInTimeLine
+    self.totalDuration = [self calculateTotalDuation];
+    ///!!!: 刷新前会先scroll到插入的位置
+//    [self scrollToTime:scrollTime animate:NO];
+    
+    @try {
+        
+        // 在调用前调用 会触发重新布局
+        [self.timeLineView.collectionViewLayout invalidateLayout];
+        [self.timeLineView performBatchUpdates:^{
+            [self.timeLineView insertSections:indexSet];
+        } completion:^(BOOL finished) {
+            
+        }];
+        
+    } @catch (NSException *exception) {
+        NSAssert(NO, @"%s %d %@", __func__, __LINE__, exception);
+    }
+}
+
+- (void)removeVideoItemAtIndex:(NSUInteger)index {
+    if (self.videoItems.count == 0) {
+        return;
+    }
+    
+    if (!_canRemove) {
+        return;
+    }
+    _canRemove = NO;
+    
+    if (index >= self.videoItems.count) {
+        NSAssert(NO, @"%s %d %@", __func__, __LINE__, @"Invalid index");
+        _canRemove = YES;
+        return;
+    }
+    // 刷新
+    @try {
+#warning 这里使用[collectionView deleteSections:]方法,需要在调用之后才改变数据源
+        // 在调用前调用 会触发重新布局
+        [self.timeLineView.collectionViewLayout invalidateLayout];
+        [self.timeLineView performBatchUpdates:^{
+            
+            [self.timeLineView deleteSections:[NSIndexSet indexSetWithIndex:index]];
+            
+            [self.videoItems removeObjectAtIndex:index];
+            ///!!!: 更新数据源之后，必须要更新self.totalDuration，在这期间会更新videoItem.startTimeInTimeLine
+            self.totalDuration = [self calculateTotalDuation];
+            
+        } completion:^(BOOL finished) {
+            // 更新
+            self.currentVideoItem = nil;
+            self->_lastContentOffsetX = self.timeLineViewBeginOffsetX - 1;
+            [self calculateCurrentTime];
+            self->_canRemove = YES;
+        }];
+        
+    } @catch (NSException *exception) {
+        NSAssert(NO, @"%s %d %@", __func__, __LINE__, exception);
+    }
+    
+}
+
+- (void)removeCurrentVideoItem {
+    NSUInteger index = [self.videoItems indexOfObject:self.currentVideoItem];
+    [self removeVideoItemAtIndex:index];
+}
+
+- (HQLVideoItem *)getCurrentVideoItem {
+    // 根据offset来算出当前时间
+    
+    if (self.videoItems.count == 0) {
+        self.currentVideoItem = nil;
+        return nil;
+    }
+    
+    CMTime currentTime = self.currentTime;
+    
+    NSInteger index = 0;
+    BOOL isReverseOrder = NO;
+    
+    if (self.currentVideoItem) {
+        
+        CMTimeRange timeRange =CMTimeRangeMake(self.currentVideoItem.startTimeInTimeLine, self.currentVideoItem.timeRange.duration);
+        
+        // 刚好位于边界的话，会默认为不包含
+        if (CMTimeRangeContainsTime(timeRange, currentTime) ||
+            (CMTimeCompare(timeRange.start, currentTime) == 0) ||
+            (CMTimeCompare(CMTimeAdd(timeRange.start, timeRange.duration), currentTime) == 0)) {
+            return self.currentVideoItem;
+        }
+        
+        // 可以根据currentItem来计算出方向
+        index = [self.videoItems indexOfObject:self.currentVideoItem];
+        // 表明currentTime小于currentItem 应倒序地查找
+        isReverseOrder = CMTimeCompare(self.currentVideoItem.startTimeInTimeLine, currentTime) >= 0 ? YES : NO;
+        index += isReverseOrder ? (-1) : 1;
+    }
+    
+    if (index <= 0) {
+        index = 0;
+    }
+    if (index >= self.videoItems.count) {
+        index = self.videoItems.count - 1;
+    }
+    
+    for (NSInteger i = index; (isReverseOrder ? i >= 0 : i < self.videoItems.count); (isReverseOrder ? i-- : i ++)) {
+        HQLVideoItem *item = self.videoItems[i];
+        if (item == self.currentVideoItem) {
+            continue;
+        }
+        CMTimeRange timeRange =CMTimeRangeMake(item.startTimeInTimeLine, item.timeRange.duration);
+        // 刚好位于边界的话，会默认为不包含
+        if (CMTimeRangeContainsTime(timeRange, currentTime) ||
+            (CMTimeCompare(timeRange.start, currentTime) == 0) ||
+            (CMTimeCompare(CMTimeAdd(timeRange.start, timeRange.duration), currentTime) == 0)) {
+            // 在范围之内
+            self.currentVideoItem = item;
+            return item;
+        }
+    }
+    
+    NSAssert(NO, @"%s %d %@", __func__, __LINE__, @"Can not find current item");
+    
+    return nil;
+}
+
 #pragma mark - event
-
-/**
- 根据indexPath计算每个cell显示的画面时间
- */
-- (CMTime)calculateItemTimeWithIndexPath:(NSIndexPath *)indexPath timeScale:(double)scale {
-    HQLVideoItem *item = self.videoItems[indexPath.section];
-    
-    // 计算真正的时间
-    // 解决在计算的时候，self.timeScale可能会改变的情况
-    CMTime timeScale = CMTimeMakeWithSeconds(scale, 600);
-    CMTime time = CMTimeMultiply(timeScale, (int)indexPath.item);
-    if (CMTimeCompare(time, item.timeRange.duration) >= 0) {
-        NSAssert(NO, @"%s %d %@", __func__, __LINE__, @"Invalid time.");
-        time = item.asset.duration; // 永远不会达到这个范围
-    }
-    CMTime start = item.timeRange.start;
-    time = CMTimeAdd(start, time);
-    return time;
-}
-
-/**
- 长度转换为时间
- */
-- (double)cellWidthChangeToTime:(double)cellWidth timeScale:(double)timeScale {
-    double a = cellWidth / _cellSize;
-    double targetTime = timeScale * a;
-    return targetTime;
-}
-
-- (double)calculateTotalDuation {
-    double target = 0.0;
-    for (HQLVideoItem *videoItem in self.videoItems) {
-        target += CMTimeGetSeconds(videoItem.timeRange.duration);
-    }
-    return target;
-}
-
-// 计算numberOfSection
-- (NSInteger)calculateNumberOfSection:(NSUInteger)section timeScale:(double)timeScale {
-    if (section < 0 || section >= self.videoItems.count) {
-        NSAssert(NO, @"%s %d %@", __func__, __LINE__, @"Invalid section");
-        return 0;
-    }
-    HQLVideoItem *videoItem = self.videoItems[section];
-    
-    // 根据时长来计算cell.count
-    double duration = CMTimeGetSeconds(videoItem.timeRange.duration);
-    NSInteger count = duration / timeScale;
-    double remainder = duration - (count * timeScale);
-    if (remainder > 0) {
-        count += 1;
-    }
-    return count;
-}
 
 /**
  根据当前缩放scale来更新timeScale
  */
-- (void)updateTimeScaleWithScale:(double)scale completion:(void(^)(void))completion {
+- (void)updateTimeAndLengthRatioWithScale:(double)scale completion:(void(^)(void))completion {
     
     dispatch_async(_updateScaleQueue, ^{
        
         pthread_mutex_lock(&self->_updateScaleWait);
         
-//        double targetScale = 1.0 / scale;
         // 计算
-        double maxTime = 0;
+        CMTime maxTime = kCMTimeZero;
         for (HQLVideoItem *videoItem in self.videoItems) {
-            double duration = CMTimeGetSeconds(videoItem.timeRange.duration);
-            if (duration > maxTime) {
+            CMTime duration = videoItem.timeRange.duration;
+            if (CMTimeCompare(duration, maxTime) >= 0) {
                 maxTime = duration;
             }
         }
         
         // 缩放 --- 缩放宽度，再根据宽度计算timeScale
         double aTargetWidth = scale * self.beforePinchWidth;
+        // 总时长
+        double totalDuration = CMTimeGetSeconds(self.totalDuration);
+        // 根据 “总时长” 和 “单位长度” 计算出来的 “单位长度时间”
+        double currentTimeRatio = totalDuration / (aTargetWidth / self.timeLengthRatio.lengthPerTimeDuration);
         
-        double currentTime = [self calculateTotalDuation] / (aTargetWidth / self->_cellSize);
+        // 目标"单位时间长度"
+        CMTime targetRatio = CMTimeMakeWithSeconds(currentTimeRatio, 600);
         
-//        double currentTime = self.timeScale;
-//        double addTime = 4;
-//        addTime *= targetScale;
-//        currentTime = currentTime + (addTime * (targetScale < 1 ? (-1) : (1)));
-        if (currentTime <= self->_minTimeScale) {
-            currentTime = self->_minTimeScale;
+        // 最小
+        CMTime min = self->_minTimeRatio;
+        // 判断范围
+        if (CMTimeCompare(targetRatio, min) <= 0) {
+            targetRatio = min;
         }
-        if (currentTime >= maxTime) {
-            currentTime = maxTime;
+        if (CMTimeCompare(targetRatio, maxTime) >= 0) {
+            targetRatio = maxTime;
         }
         
-        if (currentTime == self.timeScale) {
+        // 一样的倍率
+        if (CMTimeCompare(targetRatio, self.timeLengthRatio.timeDuration) == 0) {
             pthread_mutex_unlock(&self->_updateScaleWait);
             return;
         }
         
-//        NSLog(@"current time : %f", currentTime);
-        
-        self.timeScale = currentTime;
+        [self.timeLengthRatio updateTimeDuration:targetRatio];
         
         dispatch_async(dispatch_get_main_queue(), ^{
            
@@ -278,9 +433,173 @@
     
 }
 
-- (double)calculateWidthWithDuartion:(double)duration timeScale:(double)timeScale {
-    double target = duration / timeScale * _cellSize;
-    return target;
+/**
+ 移动到相应的位置
+ */
+- (void)scrollToTime:(CMTime)time animate:(BOOL)animate {
+    
+    // 根据time计算出位置
+    double length = [self calculateWidthWithDuartion:time timeLengthRatio:self.calculateTimeLengthRatio];
+    // 要加上beginX
+    double offset = self.timeLineViewBeginOffsetX + length;
+    
+    [self.timeLineView setContentOffset:CGPointMake(offset, 0) animated:animate];
+}
+
+#pragma mark - tool
+
+/**
+ 根据indexPath计算每个cell显示的画面时间
+ */
+- (CMTimeRange)calculateItemTimeWithIndexPath:(NSIndexPath *)indexPath timeLengthRatio:(HQLTimeAndLengthRatio *)timeLengthRatio {
+    
+    HQLVideoItem *item = self.videoItems[indexPath.section];
+    
+    // 计算真正的时间
+    // 解决在计算的时候，self.timeScale可能会改变的情况
+    CMTime timeScale = timeLengthRatio.timeDuration;
+    CMTime time = CMTimeMultiply(timeScale, (int)indexPath.item);
+    if (CMTimeCompare(time, item.timeRange.duration) >= 0) {
+        NSAssert(NO, @"%s %d %@", __func__, __LINE__, @"Invalid time.");
+        time = item.asset.duration; // 永远不会达到这个范围
+    }
+    CMTime start = item.timeRange.start;
+    time = CMTimeAdd(start, time);
+    
+    // 显示一个timeScale的时间
+    CMTime aTime = CMTimeAdd(time, timeScale);
+    CMTime bTime = CMTimeAdd(item.timeRange.start, item.timeRange.duration);
+    if (CMTimeCompare(aTime, bTime) >= 0) {
+        // 超出范围
+        timeScale = CMTimeSubtract(bTime, time);
+    }
+    
+    return CMTimeRangeMake(time, timeScale);
+}
+
+/**
+ 长度转换为时间
+ */
+- (CMTime)calculateTimeWithLength:(double)cellWidth timeLengthRatio:(HQLTimeAndLengthRatio *)timeLengthRatio {
+    return ([timeLengthRatio calculateTimeWithLength:cellWidth]);
+}
+
+/**
+ 时间转换为长度
+ */
+- (double)calculateWidthWithDuartion:(CMTime)duration timeLengthRatio:(HQLTimeAndLengthRatio *)timeLengthRatio {
+    return ([timeLengthRatio calculateLengthWithTime:duration]);
+}
+
+/**
+ 计算总时长
+ */
+- (CMTime)calculateTotalDuation {
+    CMTime kCursor = kCMTimeZero;
+    for (HQLVideoItem *videoItem in self.videoItems) {
+        videoItem.startTimeInTimeLine = kCursor;
+        kCursor = CMTimeAdd(kCursor, videoItem.timeRange.duration);
+    }
+    
+    if (CMTimeCompare(self.totalDuration, kCursor) != 0) {
+        if ([self checkDelegateMethod:@selector(timeLineManager:timeLineView:totalDuartionDidChange:)]) {
+            [self.delegate timeLineManager:self timeLineView:self.timeLineView totalDuartionDidChange:kCursor];
+        }
+    }
+    
+    return kCursor;
+}
+
+/**
+ 计算numberOfItemInSection
+ */
+- (NSInteger)calculateNumberOfSection:(NSUInteger)section timeLengthRatio:(HQLTimeAndLengthRatio *)timeLengthRatio {
+    if (section >= self.videoItems.count) {
+        NSAssert(NO, @"%s %d %@", __func__, __LINE__, @"Invalid section");
+        return 0;
+    }
+    HQLVideoItem *videoItem = self.videoItems[section];
+    
+    // 根据时长来计算cell.count
+    double duration = CMTimeGetSeconds(videoItem.timeRange.duration);
+    double timeScale = CMTimeGetSeconds(timeLengthRatio.timeDuration);
+    NSInteger count = duration / timeScale;
+    double remainder = duration - (count * timeScale);
+    if (remainder > 0) {
+        count += 1;
+    }
+    return count;
+}
+
+- (BOOL)checkDelegateMethod:(SEL)method {
+    if (self.delegate && [self.delegate respondsToSelector:method]) {
+        return YES;
+    }
+    
+    NSAssert(NO, @"%s %d \n Delegate could not implement %@", __func__, __LINE__, NSStringFromSelector(method));
+    
+    return NO;
+}
+
+/**
+ 计算当前时间 --- 会赋值currentTime
+ 同时会触发回调
+ 同时会获取当前显示的Item
+ */
+- (CMTime)calculateCurrentTime {
+    // 获取contentOffset
+    CGPoint contentOffsetPoint = self.timeLineView.contentOffset;
+    
+    // 如果跟上次一样则不再计算
+    if (_lastContentOffsetX == contentOffsetPoint.x) {
+        return self.currentTime;
+    }
+    _lastContentOffsetX = contentOffsetPoint.x;
+    
+    // 要获取正在的offset需要减去beginX
+    CGFloat targetOffsetX = contentOffsetPoint.x - self.timeLineViewBeginOffsetX;
+    
+    // 判断时间 --- 当offset超出范围时 已最大和最小范围表示
+    if (targetOffsetX <= 0.0) {
+        targetOffsetX = 0.0;
+    }
+    CGFloat max = self.timeLineView.contentSize.width;
+    if (targetOffsetX >= max) {
+        targetOffsetX = max;
+    }
+    
+    // 根据targetOffsetX来计算时间
+    CMTime time = [self calculateTimeWithLength:targetOffsetX timeLengthRatio:self.calculateTimeLengthRatio];
+    
+    self.currentTime = time;
+    // 获取当前显示的Item
+    [self getCurrentVideoItem];
+    
+    // 回调
+    if ([self checkDelegateMethod:@selector(timeLineManager:timeLineView:didChangeOffset:targetOffset:time:)]) {
+        [self.delegate timeLineManager:self timeLineView:self.timeLineView didChangeOffset:contentOffsetPoint.x targetOffset:targetOffsetX time:time];
+    }
+    
+    return time;
+}
+
+/**
+ 刷新画面
+ */
+- (void)refreshAndSeekTimeWithSpeed:(CGFloat)speed {
+    if ([self.timeLineView panGestureRecognizer].state == 0) {
+        return;
+    }
+    
+    // 如果和上次一样 那么不做回调
+    if (CMTimeCompare(_lastSeekTime, self.currentTime) == 0) {
+        return;
+    }
+    _lastSeekTime = self.currentTime;
+    
+    if ([self checkDelegateMethod:@selector(timeLineManager:timeLineView:shouldSeekTime:)]) {
+        [self.delegate timeLineManager:self timeLineView:self.timeLineView shouldSeekTime:self.currentTime];
+    }
 }
 
 #pragma mark - gesture handle
@@ -298,54 +617,30 @@
             
             self.isDurationPinch = YES;
             
-            self.beforePinchWidth = [self calculateWidthWithDuartion:[self calculateTotalDuation] timeScale:self.calcualteTimeScale];
+            self.beforePinchWidth = [self calculateWidthWithDuartion:self.totalDuration timeLengthRatio:self.calculateTimeLengthRatio];
+        
+            // 重置
+            self.lastScale = -1;
             
-            self.lastScale = 1;
-            _lastTouchPosition = [pinch locationInView:superView];
             break;
         }
         case UIGestureRecognizerStateChanged: {
             
-//            [self updateTimeScaleWithScale:pinch.scale completion:^{
-//                self.calcualteTimeScale = self.timeScale;
-//                [self.timeLineView reloadData];
-//            }];
+            // 将scale保留四位小数
+            NSInteger aScale = pinch.scale * 10000.0;
+            double bScale = aScale / 10000.0;
             
-            CGPoint currentTouchLocation = [pinch locationInView:superView];
-
-            double aDistance = currentTouchLocation.x - _lastTouchPosition.x;
-//            NSLog(@"distance : %f", aDistance);
-//
-//            NSLog(@"scale : %f", pinch.scale);
-
-            CGPoint deltaMove = CGPointMake(_lastTouchPosition.x - currentTouchLocation.x, _lastTouchPosition.y - currentTouchLocation.y);
-            float distance = sqrt(deltaMove.x * deltaMove.x + deltaMove.y * deltaMove.y);
-            if (distance == 0) {
-                return;
+            if (self.lastScale == bScale) { // 减少reload的次数
+                break;
             }
-            float hScale = 1 - fabs(deltaMove.x) / distance * (1 - pinch.scale);
-
-            BOOL bScale = (hScale > 1) && ((NSUInteger)(fabs(hScale) * 20) > ((NSUInteger)(fabs(_lastScale) * 20) + 1));
-            BOOL mScale = (hScale < 1) && ((NSUInteger)(fabs(hScale) * 20) < ((NSUInteger)(fabs(_lastScale) * 20) - 1));
-
-            if ((bScale||mScale)&&(hScale != 1.0)) {
-                self.lastScale = hScale;
-
-                // 更新
-                [self updateTimeScaleWithScale:hScale completion:^{
-                    self.calcualteTimeScale = self.timeScale;
-                    [self.timeLineView reloadData];
-                }];
-            }
-            _lastTouchPosition = currentTouchLocation;
+            self.lastScale = bScale;
             
-            
-            CGPoint firstPoint = [pinch locationOfTouch:0 inView:superView];
-            CGPoint secondPoint = CGPointZero;
-            if (pinch.numberOfTouches == 2) {
-                secondPoint = [pinch locationOfTouch:1 inView:superView];
-            }
-            NSLog(@"pinch ------ firstPoint %@ secondPoint %@",NSStringFromCGPoint(firstPoint),NSStringFromCGPoint(secondPoint));
+            // 更新
+            [self updateTimeAndLengthRatioWithScale:bScale completion:^{
+                // 刷新
+                [self.calculateTimeLengthRatio updateTimeDuration:self.timeLengthRatio.timeDuration];
+                [self.timeLineView reloadData];
+            }];
             
             break;
         }
@@ -353,9 +648,8 @@
             
             self.isDurationPinch = NO;
             
-//            for (HQLThumbnailCell *cell in [self.timeLineView visibleCells]) {
-//                [cell.imageGetter run];
-//            }
+            // 重置
+            self.lastScale = -1;
             
             break;
         }
@@ -364,90 +658,67 @@
     
 }
 
+#pragma mark - scrollView delegate
+
+/*
+  在这个方法里面不应该做滚动必须要做的事情，因为在这个方法里面做的是刷新画面的动作，刷新频率比较低
+ */
+
+- (void)scrollViewDidScroll:(UIScrollView * _Nonnull)scrollView {
+    
+    if (scrollView != self.timeLineView) {
+        return;
+    }
+    
+    // 更新时间
+    [self calculateCurrentTime];
+    
+    // 判断速度 --- 在滑动速度比较低的时候可以刷新画面
+    CGPoint velocity = [[scrollView panGestureRecognizer] velocityInView:scrollView];
+    CGFloat scrollSpeed = fabs(velocity.x);
+    [self refreshAndSeekTimeWithSpeed:scrollSpeed];
+}
+
+- (void)scrollViewWillEndDragging:(UIScrollView *)scrollView withVelocity:(CGPoint)velocity targetContentOffset:(inout CGPoint *)targetContentOffset {
+    if (scrollView != self.timeLineView) {
+        return;
+    }
+    
+    CGFloat scrollSpeed = fabs(velocity.x);
+    // 刷新画面滑动速度比较低的时候可以刷新画面
+    [self refreshAndSeekTimeWithSpeed:scrollSpeed];
+}
+
+- (void) scrollViewWillBeginDragging:(UIScrollView *)scrollView {
+    
+}
+
+- (void)scrollViewDidEndDragging:(UIScrollView *)scrollView willDecelerate:(BOOL)decelerate {
+    
+}
+
+- (void)scrollViewDidEndDecelerating:(UIScrollView *)scrollView {
+    
+}
+
 #pragma mark - collectionView delegate
 
 - (NSInteger)numberOfSectionsInCollectionView:(UICollectionView *)collectionView {
-//    return 1;
     return self.videoItems.count;
 }
 
 - (NSInteger)collectionView:(UICollectionView *)collectionView numberOfItemsInSection:(NSInteger)section {
-    if (section != 0) {
-        return 0;
-    }
-    return [self calculateNumberOfSection:section timeScale:self.calcualteTimeScale];
-//    return 1;
-}
-
-- (CGSize)collectionView:(UICollectionView *)collectionView layout:(UICollectionViewLayout *)collectionViewLayout sizeForItemAtIndexPath:(NSIndexPath *)indexPath {
-    
-//    HQLVideoItem *item = self.videoItems[indexPath.section];
-//
-//    double duration = CMTimeGetSeconds(item.timeRange.duration);
-//    CGFloat width = duration / self.timeScale * _cellSize;
-//    return CGSizeMake(width, _cellSize);
-    
-    // 计算每个cell的大小
-    NSInteger sectionCount = [self calculateNumberOfSection:indexPath.section timeScale:self.calcualteTimeScale];
-    if (indexPath.item != (sectionCount - 1)) {
-        // 不是最后一个
-        return CGSizeMake(_cellSize, _cellSize);
-    }
-    // 最后一个 --- 需要计算cell的宽度
-    HQLVideoItem *item = self.videoItems[indexPath.section];
-    // 这个时间是相对于asset的
-    CMTime currentItemTime = [self calculateItemTimeWithIndexPath:indexPath timeScale:self.calcualteTimeScale];
-    // 所以这里也得相对于asset的时间来计算
-    CMTime currentItemDuration = CMTimeSubtract(CMTimeAdd(item.timeRange.start, item.timeRange.duration), currentItemTime);
-
-    double duration = CMTimeGetSeconds(currentItemDuration);
-    double width = duration / self.calcualteTimeScale * _cellSize;
-    return CGSizeMake(width, _cellSize);
-}
-
-- (CGFloat)collectionView:(UICollectionView *)collectionView layout:(UICollectionViewLayout *)collectionViewLayout minimumLineSpacingForSectionAtIndex:(NSInteger)section {
-    return 0;
-}
-
-- (CGFloat)collectionView:(UICollectionView *)collectionView layout:(UICollectionViewLayout *)collectionViewLayout minimumInteritemSpacingForSectionAtIndex:(NSInteger)section {
-    return 0;
-}
-
-- (UICollectionReusableView *)collectionView:(UICollectionView *)collectionView viewForSupplementaryElementOfKind:(NSString *)kind atIndexPath:(NSIndexPath *)indexPath {
-    
-    UICollectionReusableView *view = nil;
-    
-    if ([kind isEqualToString:UICollectionElementKindSectionHeader]) {
-        
-        view = [collectionView dequeueReusableSupplementaryViewOfKind:kind withReuseIdentifier:@"headerReuseId" forIndexPath:indexPath];
-        
-    } else {
-        
-        view = [collectionView dequeueReusableSupplementaryViewOfKind:kind withReuseIdentifier:@"footerReuseId" forIndexPath:indexPath];
-        
-    }
-    
-    return view;
-}
-
-- (CGSize)collectionView:(UICollectionView *)collectionView layout:(UICollectionViewLayout *)collectionViewLayout referenceSizeForHeaderInSection:(NSInteger)section {
-    return CGSizeMake(10, _cellSize);
-}
-
-- (CGSize)collectionView:(UICollectionView *)collectionView layout:(UICollectionViewLayout *)collectionViewLayout referenceSizeForFooterInSection:(NSInteger)section {
-    return CGSizeMake(10, _cellSize);
+    NSInteger count = [self calculateNumberOfSection:section timeLengthRatio:self.calculateTimeLengthRatio];
+    return count;
 }
 
 - (UICollectionViewCell *)collectionView:(UICollectionView *)collectionView cellForItemAtIndexPath:(NSIndexPath *)indexPath {
     
     HQLVideoItem *item = self.videoItems[indexPath.section];
-
-//    HQLVideoItemCell *_cell = [collectionView dequeueReusableCellWithReuseIdentifier:@"reuseId" forIndexPath:indexPath];
-//    [_cell setVideoItem:item];
-//    [_cell refreshWithTimeScale:self.timeScale];
     
     // 计算真正的时间
-    CMTime time = [self calculateItemTimeWithIndexPath:indexPath timeScale:self.calcualteTimeScale];
+    CMTimeRange timeRange = [self calculateItemTimeWithIndexPath:indexPath timeLengthRatio:self.calculateTimeLengthRatio];
+    CMTime time = timeRange.start;
 
     // 获取图片
     HQLThumbnailModel *model = [[HQLThumbnailModel alloc] init];
@@ -459,18 +730,79 @@
     
     // 如果在缩放的时候刷新collectionView 那么就在主线程中获取图片
     [_cell.imageGetter generateThumbnailWithModel:model mainThread:self.isDurationPinch];
-
-//    if (self.isDurationPinch) {
-//        [_cell.imageGetter wait];
-//    } else {
-//        [_cell.imageGetter run];
-//    }
+    
+    NSInteger numberOfSection = self.videoItems.count;
+    NSInteger itemCount = [self collectionView:collectionView numberOfItemsInSection:indexPath.section];
+    
+    double cellWidth = [self calculateWidthWithDuartion:timeRange.duration timeLengthRatio:self.calculateTimeLengthRatio];
+    
+    // 更新圆角
+    [_cell updateRoundCornersWithIsSingleCell:(itemCount == 1) isLastCell:(indexPath.item == (itemCount - 1)) isFirstCell:(indexPath.item == 0) isFirstSection:(indexPath.section == 0) isLastSection:(indexPath.section == (numberOfSection - 1)) isSingleSection:(numberOfSection == 1) cellSize:CGSizeMake(cellWidth, _cellSize)];
     
     return _cell;
+}
+
+- (UICollectionReusableView *)collectionView:(UICollectionView *)collectionView viewForSupplementaryElementOfKind:(NSString *)kind atIndexPath:(NSIndexPath *)indexPath {
+   
+    if ([kind isEqualToString:UICollectionElementKindSectionHeader]) {
+        UICollectionReusableView *headerView = [collectionView dequeueReusableSupplementaryViewOfKind:kind withReuseIdentifier:@"headerReuseId" forIndexPath:indexPath];
+        [headerView setBackgroundColor:[UIColor redColor]];
+        return headerView;
+    }
+    
+    UICollectionReusableView *footerView = [collectionView dequeueReusableSupplementaryViewOfKind:kind withReuseIdentifier:@"footerReuseId" forIndexPath:indexPath];
+    [footerView setHidden:YES];
+    return footerView;
+}
+
+#pragma mark - HQLTimelineLayoutDelegate
+
+- (CMTime)timeLineDurationWithCollectionView:(UICollectionView *)collectionView layout:(HQLTimeLineLayout *)layout {
+    return self.totalDuration;
+}
+
+- (HQLTimeAndLengthRatio *)timeLineTimeAndLengthRatioWithCollectionView:(UICollectionView *)collectionView layout:(HQLTimeLineLayout *)layout {
+    return self.calculateTimeLengthRatio;
+}
+
+- (NSUInteger)numberOfCoverSectionWithCollectionView:(UICollectionView *)collectionView layout:(HQLTimeLineLayout *)layout {
+    return 0;
+}
+
+- (double)itemHeightWithCollectionView:(UICollectionView *)collectionView layout:(HQLTimeLineLayout *)layout {
+    return _cellSize;
+}
+
+- (CMTimeRange)collectionView:(UICollectionView *)collectionView layout:(HQLTimeLineLayout *)layout itemTimeRangeForIndexPath:(NSIndexPath *)indexPath {
+    // 只是计算了videoItem的在该Asset上的timeRange
+    CMTimeRange range = [self calculateItemTimeWithIndexPath:indexPath timeLengthRatio:self.calculateTimeLengthRatio];
+    // 再计算该cell在时间线上的start
+    HQLVideoItem *item = self.videoItems[indexPath.section];
+    CMTime start = CMTimeMultiply(self.calculateTimeLengthRatio.timeDuration, (int)indexPath.item);
+    if (CMTimeCompare(start, item.timeRange.duration) >= 0) {
+        NSAssert(NO, @"%s %d %@", __func__, __LINE__, @"Invalid time.");
+        start = item.asset.duration; // 永远不会达到这个范围
+    }
+    // 加上在时间线上的开始时间
+    start = CMTimeAdd(item.startTimeInTimeLine, start);
+    range.start = start;
+    return range;
+}
+
+- (CGSize)collectionView:(UICollectionView *)collectionView layout:(HQLTimeLineLayout *)layout sizeForHeaderInSection:(NSInteger)section {
+    if (section == 0) {
+        return CGSizeZero;
+    }
+    
+    return CGSizeMake(50, 30);
 }
 
 #pragma mark - setter
 
 #pragma mark - getter
+
+- (CGFloat)timeLineViewBeginOffsetX {
+    return (-self.timeLineView.contentInset.left);
+}
 
 @end

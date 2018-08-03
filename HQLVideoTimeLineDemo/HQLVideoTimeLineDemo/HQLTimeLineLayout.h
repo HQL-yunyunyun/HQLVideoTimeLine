@@ -26,18 +26,12 @@
 /**
  总时长
  */
-- (double)timeLineDurationWithCollectionView:(UICollectionView *)collectionView layout:(HQLTimeLineLayout *)layout;
+- (CMTime)timeLineDurationWithCollectionView:(UICollectionView *)collectionView layout:(HQLTimeLineLayout *)layout;
 
 /**
  时长的换算
  */
 - (HQLTimeAndLengthRatio *)timeLineTimeAndLengthRatioWithCollectionView:(UICollectionView *)collectionView layout:(HQLTimeLineLayout *)layout;
-
-/**
- coverCell的section个数，这个section的个数是包含在collectionView的numberOfSection中的。
- 所以这里的意思就是：collectionView最后的 numberOfCoverSection 都为coverSection
- */
-- (NSUInteger)numberOfCoverSectionWithCollectionView:(UICollectionView *)collectionView layout:(HQLTimeLineLayout *)layout;
 
 /**
  返回每个Item的高度
@@ -48,6 +42,14 @@
  返回每个Item的时间范围 --- 以此来计算Item的size
  */
 - (CMTimeRange)collectionView:(UICollectionView *)collectionView layout:(HQLTimeLineLayout *)layout itemTimeRangeForIndexPath:(NSIndexPath *)indexPath;
+
+@optional
+
+/**
+ coverCell的section个数，这个section的个数是包含在collectionView的numberOfSection中的。
+ 所以这里的意思就是：collectionView最后的 numberOfCoverSection 都为coverSection
+ */
+- (NSUInteger)numberOfCoverSectionWithCollectionView:(UICollectionView *)collectionView layout:(HQLTimeLineLayout *)layout;
 
 /**
  section.footer 的 size
@@ -77,21 +79,28 @@
 /**
  时间长度
  */
-@property (nonatomic, assign) double timeDuration;
+@property (nonatomic, assign, readonly) CMTime timeDuration;
 
 /**
- 每一个时间长度代表的length
+ 每一个时间长度代表的length --- 一旦生成了就不能改变
  */
-@property (nonatomic, assign) double lengthPerTimeDuration;
+@property (nonatomic, assign, readonly) double lengthPerTimeDuration;
+
+- (instancetype)initWithTimeDuration:(CMTime)timeDuration lengthPerTimeDuration:(double)lengthPerTimeDuration;
+
+/**
+ 更新 timeDuration属性
+ */
+- (void)updateTimeDuration:(CMTime)duration;
 
 /**
  根据time来计算length
  */
-- (double)calculateLengthWithTime:(double)time;
+- (double)calculateLengthWithTime:(CMTime)time;
 
 /**
  根据length来计算time
  */
-- (double)calculateTimeWithLength:(double)length;
+- (CMTime)calculateTimeWithLength:(double)length;
 
 @end

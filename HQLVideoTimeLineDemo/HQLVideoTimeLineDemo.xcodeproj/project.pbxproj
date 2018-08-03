@@ -7,6 +7,7 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		0D16980E21109CD4002D01E8 /* HQLTimeLineView.m in Sources */ = {isa = PBXBuildFile; fileRef = 0D16980D21109CD4002D01E8 /* HQLTimeLineView.m */; };
 		0D495E952105AC7500A02F57 /* AppDelegate.m in Sources */ = {isa = PBXBuildFile; fileRef = 0D495E942105AC7500A02F57 /* AppDelegate.m */; };
 		0D495E982105AC7500A02F57 /* ViewController.m in Sources */ = {isa = PBXBuildFile; fileRef = 0D495E972105AC7500A02F57 /* ViewController.m */; };
 		0D495E9B2105AC7500A02F57 /* Main.storyboard in Resources */ = {isa = PBXBuildFile; fileRef = 0D495E992105AC7500A02F57 /* Main.storyboard */; };
@@ -25,6 +26,8 @@
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
+		0D16980C21109CD4002D01E8 /* HQLTimeLineView.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = HQLTimeLineView.h; sourceTree = "<group>"; };
+		0D16980D21109CD4002D01E8 /* HQLTimeLineView.m */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.objc; path = HQLTimeLineView.m; sourceTree = "<group>"; };
 		0D495E902105AC7500A02F57 /* HQLVideoTimeLineDemo.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = HQLVideoTimeLineDemo.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		0D495E932105AC7500A02F57 /* AppDelegate.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = AppDelegate.h; sourceTree = "<group>"; };
 		0D495E942105AC7500A02F57 /* AppDelegate.m */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.objc; path = AppDelegate.m; sourceTree = "<group>"; };
@@ -128,6 +131,8 @@
 				0D4AB45121096458004102FD /* HQLVideoTimeLineManager.m */,
 				0DDBC4C9211000A300141FDA /* HQLTimeLineLayout.h */,
 				0DDBC4CA211000A300141FDA /* HQLTimeLineLayout.m */,
+				0D16980C21109CD4002D01E8 /* HQLTimeLineView.h */,
+				0D16980D21109CD4002D01E8 /* HQLTimeLineView.m */,
 			);
 			name = VideoTimeLine;
 			sourceTree = "<group>";
@@ -244,6 +249,7 @@
 			files = (
 				0DDBC4CB211000A300141FDA /* HQLTimeLineLayout.m in Sources */,
 				0DDBC4C7210B00A700141FDA /* HQLVideoItemCell.m in Sources */,
+				0D16980E21109CD4002D01E8 /* HQLTimeLineView.m in Sources */,
 				0D495EB82105E3DD00A02F57 /* HQLThumbnailModel.m in Sources */,
 				0D495EBB2106C15D00A02F57 /* HQLThumbnailCellImageGetter.m in Sources */,
 				0D4AB45221096458004102FD /* HQLVideoTimeLineManager.m in Sources */,
