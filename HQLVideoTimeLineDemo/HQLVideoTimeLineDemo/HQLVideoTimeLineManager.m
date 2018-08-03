@@ -223,11 +223,11 @@
         @try {
             
             NSIndexSet *indexSet = [NSIndexSet indexSetWithIndexesInRange:NSMakeRange(origin, videoItems.count)];
-            // 在调用前调用 会触发重新布局
-            [self.timeLineView.collectionViewLayout invalidateLayout];
             [self.timeLineView performBatchUpdates:^{
                 [self.timeLineView insertSections:indexSet];
             } completion:^(BOOL finished) {
+                // 更新
+                [self updateCurrentTimeAndCurrentItem];
             }];
             
         } @catch (NSException *exception) {
@@ -251,11 +251,12 @@
     @try {
         
         // 在调用前调用 会触发重新布局
-        [self.timeLineView.collectionViewLayout invalidateLayout];
+
         [self.timeLineView performBatchUpdates:^{
             [self.timeLineView insertSections:indexSet];
         } completion:^(BOOL finished) {
-            
+            // 更新
+            [self updateCurrentTimeAndCurrentItem];
         }];
         
     } @catch (NSException *exception) {
@@ -282,7 +283,6 @@
     @try {
 #warning 这里使用[collectionView deleteSections:]方法,需要在调用之后才改变数据源
         // 在调用前调用 会触发重新布局
-        [self.timeLineView.collectionViewLayout invalidateLayout];
         [self.timeLineView performBatchUpdates:^{
             
             [self.timeLineView deleteSections:[NSIndexSet indexSetWithIndex:index]];
@@ -293,9 +293,7 @@
             
         } completion:^(BOOL finished) {
             // 更新
-            self.currentVideoItem = nil;
-            self->_lastContentOffsetX = self.timeLineViewBeginOffsetX - 1;
-            [self calculateCurrentTime];
+            [self updateCurrentTimeAndCurrentItem];
             self->_canRemove = YES;
         }];
         
@@ -600,6 +598,16 @@
     if ([self checkDelegateMethod:@selector(timeLineManager:timeLineView:shouldSeekTime:)]) {
         [self.delegate timeLineManager:self timeLineView:self.timeLineView shouldSeekTime:self.currentTime];
     }
+}
+
+/**
+ 更新当前时间和当前显示的Item
+ */
+- (void)updateCurrentTimeAndCurrentItem {
+    // 更新
+    self.currentVideoItem = nil;
+    _lastContentOffsetX = self.timeLineViewBeginOffsetX - 1;
+    [self calculateCurrentTime];
 }
 
 #pragma mark - gesture handle

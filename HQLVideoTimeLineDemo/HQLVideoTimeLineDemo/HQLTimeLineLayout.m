@@ -146,9 +146,7 @@
     NSAssert(CMTIMERANGE_IS_INVALID(timeRange) != YES, @"%s %d %@ %@", __func__, __LINE__, @"Invalid time range of indexPath", indexPath);
     
     // 判断timeRange是否合法
-    ///* // 不用判断是否合法
     NSAssert(CMTimeRangeContainsTimeRange(self.timeLineRange, timeRange), @"%s %d %@ %@", __func__, __LINE__, @"Invalid time range of indexPath", indexPath);
-    //*/
     
     // 计算位置size
     double width = [_timeLengthRatio calculateLengthWithTime:timeRange.duration];
@@ -235,8 +233,6 @@
         aUpdate.updateAction != UICollectionUpdateActionInsert) {
         return;
     }
-    //[self prepareLayout];
-    //[self collectionViewContentSize];
     
     _insertArray = [NSMutableArray array];
     _deleteArray = [NSMutableArray array];
