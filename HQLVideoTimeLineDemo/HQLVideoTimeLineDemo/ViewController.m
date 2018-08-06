@@ -60,7 +60,7 @@
     videoItem2.asset = [AVURLAsset assetWithURL:[NSURL fileURLWithPath:path]];
     videoItem2.timeRange = CMTimeRangeMake(kCMTimeZero, CMTimeMakeWithSeconds(10, 600));
     
-    [self.videoTimeLineManager updateVideoItems:@[videoItem, videoItem2]];
+    [self.videoTimeLineManager updateVideoItems:@[videoItem]];
 }
 
 - (void)prepareUI {

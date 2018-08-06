@@ -20,6 +20,8 @@
 
 @property (nonatomic, strong, readonly) HQLThumbnailCellImageGetter *imageGetter;
 
+@property (nonatomic, copy) void(^imageGetterCallBackHandle)(UIImage *image, HQLThumbnailCellImageGetter *imageGetter);
+
 - (void)updateRoundCornersWithIsSingleCell:(BOOL)isSingleCell isLastCell:(BOOL)isLastCell isFirstCell:(BOOL)isFirstCell isFirstSection:(BOOL)isFirstSection isLastSection:(BOOL)isLastSection isSingleSection:(BOOL)isSingleSection cellSize:(CGSize)cellSize;
 
 @end

@@ -41,6 +41,10 @@
         __weak typeof(self) _self = self;
         self.imageGetter.fetchImageHandle = ^(UIImage *image) {
             _self.thumbnail = image;
+            
+            // 回调
+            _self.imageGetterCallBackHandle ? _self.imageGetterCallBackHandle(image, _self.imageGetter) : nil;
+            
         };
         
         self.currentPath = -1;

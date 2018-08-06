@@ -8,6 +8,8 @@
 
 #import <UIKit/UIKit.h>
 
+#import <AVFoundation/AVFoundation.h>
+
 @class HQLThumbnailCell, HQLThumbnailModel;
 
 @interface HQLThumbnailCellImageGetter : NSObject
@@ -25,6 +27,8 @@
  是否在主线程获取图片
  */
 - (void)generateThumbnailWithModel:(HQLThumbnailModel *)model mainThread:(BOOL)isMainThread;
+
+- (AVAssetImageGenerator *)generatorWithModel:(HQLThumbnailModel *)model;
 
 - (void)cleanMemory;
 

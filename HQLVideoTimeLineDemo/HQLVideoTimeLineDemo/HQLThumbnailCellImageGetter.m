@@ -17,10 +17,6 @@
 
 @property (nonatomic, strong) NSOperation *operation;
 
-// 直接调用主线程
-@property (nonatomic, strong) NSOperationQueue *mainQueue;
-@property (nonatomic, strong) NSOperation *mainOperation;
-
 @property (nonatomic, strong) HQLThumbnailModel *currentModel;
 
 @property (nonatomic, strong) AVAssetImageGenerator *imageGenerator;
@@ -36,9 +32,6 @@
         self.queue = [[NSOperationQueue alloc] init];
         self.queue.name = @"hql.HQLThumbnailCellImageGetter.queue";
         [self.queue setMaxConcurrentOperationCount:1]; // 最大并发数为1
-        
-        self.mainQueue = [NSOperationQueue mainQueue];
-        [self.mainQueue setMaxConcurrentOperationCount:1];
     }
     return self;
 }
@@ -52,10 +45,6 @@
 
 - (void)cleanMemory {
     
-    [self.mainOperation cancel];
-    self.mainOperation = nil;
-    self.mainQueue = nil;
-    
     [self.operation cancel];
     self.operation = nil;
     [self.queue cancelAllOperations];
@@ -65,6 +54,10 @@
     self.currentModel = nil;
     [self.imageGenerator cancelAllCGImageGeneration];
     self.imageGenerator = nil;
+}
+
+- (AVAssetImageGenerator *)generatorWithModel:(HQLThumbnailModel *)model {
+    return [self createAssetImageGeneratorWithModel:model];
 }
 
 - (void)generateThumbnailWithModel:(HQLThumbnailModel *)model {
@@ -87,16 +80,20 @@
         }
         [self.queue cancelAllOperations];
         
-        if (self.mainOperation) {
-            [self.mainOperation cancel];
-            self.mainOperation = nil;
-        }
-        
-        __weak typeof(self) _self = self;
-        self.mainOperation = [NSBlockOperation blockOperationWithBlock:^{
-            [_self generateThumbnail];
-        }];
-        [self.mainQueue addOperation:self.mainOperation];
+        // 不能在异步调用主线程 --- 直接赋值
+        //dispatch_async(dispatch_get_main_queue(), ^{
+            AVAssetImageGenerator *imageGenerator = [self createAssetImageGeneratorWithModel:self.currentModel];
+            if (!imageGenerator || !self.currentModel) {
+                return;
+            }
+            
+            // 创建图片
+            CGImageRef image = [imageGenerator copyCGImageAtTime:self.currentModel.thumbnailTime actualTime:NULL error:nil];
+            UIImage *aImage = [UIImage imageWithCGImage:image scale:0.1 orientation:UIImageOrientationUp];
+            CGImageRelease(image);
+            
+            self.fetchImageHandle ? self.fetchImageHandle(aImage) : nil;
+        //});
         
         return;
     }

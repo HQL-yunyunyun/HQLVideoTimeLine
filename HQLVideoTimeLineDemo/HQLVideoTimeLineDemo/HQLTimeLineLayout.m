@@ -146,7 +146,7 @@
     NSAssert(CMTIMERANGE_IS_INVALID(timeRange) != YES, @"%s %d %@ %@", __func__, __LINE__, @"Invalid time range of indexPath", indexPath);
     
     // 判断timeRange是否合法
-    NSAssert(CMTimeRangeContainsTimeRange(self.timeLineRange, timeRange), @"%s %d %@ %@", __func__, __LINE__, @"Invalid time range of indexPath", indexPath);
+    //NSAssert(CMTimeRangeContainsTimeRange(self.timeLineRange, timeRange), @"%s %d %@ %@", __func__, __LINE__, @"Invalid time range of indexPath", indexPath);
     
     // 计算位置size
     double width = [_timeLengthRatio calculateLengthWithTime:timeRange.duration];
@@ -284,7 +284,7 @@
 - (UICollectionViewLayoutAttributes *)finalLayoutAttributesForDisappearingItemAtIndexPath:(NSIndexPath *)itemIndexPath {
     UICollectionViewLayoutAttributes *attributes = [super finalLayoutAttributesForDisappearingItemAtIndexPath:itemIndexPath];
     
-    if ([_insertArray containsObject:itemIndexPath]) {
+    if ([_deleteArray containsObject:itemIndexPath]) {
         if (!attributes) {
             attributes = [self layoutAttributesForItemAtIndexPath:itemIndexPath];
         }
