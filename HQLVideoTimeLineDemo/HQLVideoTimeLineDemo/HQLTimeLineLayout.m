@@ -228,12 +228,6 @@
     [super prepareForCollectionViewUpdates:updateItems];
     
     // 暂时只有删除和插入
-    UICollectionViewUpdateItem *aUpdate = updateItems.firstObject;
-    if (aUpdate.updateAction != UICollectionUpdateActionDelete ||
-        aUpdate.updateAction != UICollectionUpdateActionInsert) {
-        return;
-    }
-    
     _insertArray = [NSMutableArray array];
     _deleteArray = [NSMutableArray array];
     
